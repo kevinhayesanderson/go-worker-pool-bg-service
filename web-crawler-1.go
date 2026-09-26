@@ -1,8 +1,6 @@
 package main
 
-import (
-	"fmt"
-)
+import "fmt"
 
 type CrawlResult struct {
 	depth int
@@ -23,36 +21,58 @@ func Worker(url string, depth int, fetcher Fetcher, out chan CrawlResult) {
 	}
 }
 
+func WorkerWithSignal(url string, depth int, fetcher Fetcher, dataChan chan CrawlResult, signalChan chan struct{}) {
+	defer func() { signalChan <- struct{}{} }()
+	body, urls, err := fetcher.Fetch(url)
+	result := CrawlResult{
+		depth: depth,
+		url:   url,
+		body:  body,
+		urls:  urls,
+		err:   err,
+	}
+	select {
+	case dataChan <- result:
+	default:
+		fmt.Printf("System slammed. Dropped data for: %s\n", url)
+	}
+}
+
 func Crawl1(url string, depth int, fetcher Fetcher) {
 	if depth <= 0 {
 		return
 	}
-	resultChannel := make(chan CrawlResult)
+	dataChan := make(chan CrawlResult, 10)
+	signalChan := make(chan struct{})
+
 	visited := make(map[string]bool)
+	workerCount := 0
 
 	visited[url] = true
-	workerCount := 0
 	workerCount++
-	go Worker(url, depth, fetcher, resultChannel)
+	go WorkerWithSignal(url, depth, fetcher, dataChan, signalChan)
 
 	for workerCount > 0 {
-		res := <-resultChannel
-		workerCount--
+		select {
+		case res := <-dataChan:
 
-		if res.err != nil {
-			fmt.Println(res.err)
-			continue
-		}
-		fmt.Printf("found: %s %q\n", res.url, res.body)
+			if res.err != nil {
+				fmt.Println(res.err)
+				continue
+			}
+			fmt.Printf("found: %s %q\n", res.url, res.body)
 
-		if res.depth > 0 {
-			for _, resurl := range res.urls {
-				if !visited[resurl] {
-					visited[resurl] = true
-					workerCount++
-					go Worker(resurl, res.depth-1, fetcher, resultChannel)
+			if res.depth > 0 {
+				for _, resurl := range res.urls {
+					if !visited[resurl] {
+						visited[resurl] = true
+						workerCount++
+						go WorkerWithSignal(resurl, res.depth-1, fetcher, dataChan, signalChan)
+					}
 				}
 			}
+		case <-signalChan:
+			workerCount--
 		}
 	}
 }

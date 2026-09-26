@@ -44,7 +44,6 @@ func Crawl(url string, depth int, fetcher Fetcher, cache *SafeCache, wg *sync.Wa
 			Crawl(url, depth-1, fetcher, cache, wg)
 		}(u)
 	}
-	return
 }
 
 // Strategy 1 (Shared Memory + Mutex + WaitGroup)
